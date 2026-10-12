@@ -21,6 +21,20 @@ sweepr ai explain <path>       AI: what is this folder, is it safe to delete?
 
 Every destructive command supports `--dry-run`. Run it first.
 
+## Interface
+
+In a terminal, sweepr runs as a full-screen app (built with [Bubble Tea](https://github.com/charmbracelet/bubbletea)):
+
+- **Home screen:** animated gradient logo, action menu (`↑↓`, `enter`, or `1`–`9`) and a live system panel with disk, memory, CPU sparkline and a health score.
+- **Pickers:** for clean, uninstall, leftovers, purge and installers. `space` toggles, `a`/`n`/`i` select all/none/invert,
+  `/` fuzzy-filters, `s` sorts. Each row has size bars and confidence badges, there is a detail pane for the
+  highlighted row, and `✦AI✓`/`✦AI✗` marks Claude's verdict.
+- **`sweepr status`:** live dashboard with CPU and memory charts, per-core load, disks, network rates and the top processes (`s` sorts by CPU or memory).
+- **`sweepr analyze`:** disk explorer. `→` opens a folder, `←` goes back, `t` moves to the Trash, `r` reveals in Finder/Explorer, `e` asks Claude what a folder is.
+- Spinners with progress bars, confirm dialogs (red for permanent deletes) and an animated result card.
+
+Pipes, scripts, `--yes`, `--json` and `--plain` (or `SWEEPR_PLAIN=1`) get plain line-based output instead.
+
 ## Install
 
 ```sh

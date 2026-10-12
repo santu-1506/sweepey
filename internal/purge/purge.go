@@ -65,7 +65,10 @@ func DefaultRoots() []string {
 
 // Scan walks the roots (up to maxDepth levels) and returns artifacts sorted
 // by size. Matched artifacts are not descended into.
-func Scan(roots []string, maxDepth int) []Artifact {
+func Scan(roots []string, maxDepth int) []Artifact { return ScanProgress(roots, maxDepth, nil) }
+
+// ScanProgress is Scan with a callback for every directory visited.
+func ScanProgress(roots []string, maxDepth int, progress func(dir string)) []Artifact {
 	var out []Artifact
 	seenRoot := map[string]bool{}
 	wl := config.Whitelist()
@@ -86,6 +89,9 @@ func Scan(roots []string, maxDepth int) []Artifact {
 		_ = filepath.WalkDir(real, func(p string, d fs.DirEntry, err error) error {
 			if err != nil || !d.IsDir() {
 				return nil
+			}
+			if progress != nil {
+				progress(p)
 			}
 			if strings.Count(p, string(filepath.Separator))-base > maxDepth {
 				return fs.SkipDir

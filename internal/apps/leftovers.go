@@ -23,6 +23,7 @@ type Candidate struct {
 	Primary    bool   // the app bundle / install folder itself
 	Selected   bool
 	AINote     string
+	AIVerdict  string // remove | keep | unsure
 }
 
 // root is one directory the leftover scan looks inside (one level deep, plus

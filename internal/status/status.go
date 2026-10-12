@@ -31,3 +31,6 @@ func Collect() Info {
 	info.Disks = disks()
 	return info
 }
+
+// Disks returns capacity and free space for the local fixed disks.
+func Disks() []Disk { return disks() }

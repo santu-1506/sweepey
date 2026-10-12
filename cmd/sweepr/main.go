@@ -14,6 +14,8 @@ import (
 
 	"github.com/santu-1506/sweepey/internal/fsutil"
 	"github.com/santu-1506/sweepey/internal/safety"
+	"github.com/santu-1506/sweepey/internal/status"
+	"github.com/santu-1506/sweepey/internal/tui"
 	"github.com/santu-1506/sweepey/internal/ui"
 )
 
@@ -29,6 +31,7 @@ type opts struct {
 	All       bool
 	JSON      bool
 	Quiet     bool
+	Plain     bool
 	Help      bool
 	Top       int
 	Args      []string
@@ -57,6 +60,8 @@ func parseArgs(args []string) (opts, error) {
 			o.JSON = true
 		case "--quiet":
 			o.Quiet = true
+		case "--plain":
+			o.Plain = true
 		case "--help", "-h":
 			o.Help = true
 		case "--top":
@@ -94,6 +99,7 @@ func main() {
 		os.Exit(2)
 	}
 	ui.AssumeYes = o.Yes
+	setupFront(o)
 	if o.Help {
 		usage()
 		return
@@ -143,6 +149,9 @@ func menu(ctx context.Context) error {
 		usage()
 		return nil
 	}
+	if fancy {
+		return fancyMenu(ctx)
+	}
 	items := []struct {
 		key, label string
 		cmd        string
@@ -183,6 +192,31 @@ func menu(ctx context.Context) error {
 	}
 }
 
+// fancyMenu loops between the animated home screen and the chosen action.
+func fancyMenu(ctx context.Context) error {
+	osName := status.Collect().OSVersion
+	last := 0
+	for {
+		id := tui.Menu(version, osName, last)
+		if id == "" {
+			fmt.Println("  " + tui.Shimmer("✦ stay clean ✦", 0, tui.Neon...))
+			return nil
+		}
+		last = tui.MenuIndex(id)
+		o := opts{Top: 20}
+		if id == "ai" {
+			o.Args = []string{"advise"}
+		}
+		if err := run(ctx, id, o); err != nil {
+			ui.Fail("%v", err)
+		}
+		// Full-screen tools leave nothing behind to read; the others do.
+		if id != "analyze" && id != "status" && !pause() {
+			return nil
+		}
+	}
+}
+
 func usage() {
 	fmt.Printf(`%s %s — clean macOS and Windows, uninstall apps completely.
 
@@ -211,6 +245,7 @@ func usage() {
       --quiet      Windows uninstall: run the app's silent uninstaller
       --json       status, history: machine-readable output
       --top N      analyze: rows to show (default 20)
+      --plain      no full-screen UI or animations (also SWEEPR_PLAIN=1)
 
 AI features need ANTHROPIC_API_KEY (or `+"`ant auth login`"+`). They send paths, names and
 sizes only — never file contents. Set SWEEPR_AI_MODEL to change the model.

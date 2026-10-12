@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,12 +12,23 @@ import (
 	"github.com/santu-1506/sweepey/internal/apps"
 	"github.com/santu-1506/sweepey/internal/fsutil"
 	"github.com/santu-1506/sweepey/internal/safety"
+	"github.com/santu-1506/sweepey/internal/tui"
 	"github.com/santu-1506/sweepey/internal/ui"
 )
 
+func discoverApps() ([]apps.App, error) {
+	var all []apps.App
+	err := task("Discovering installed apps", func(func(tui.Update)) (string, error) {
+		var err error
+		all, err = apps.Discover()
+		return fmt.Sprintf("%d apps", len(apps.Removable(all))), err
+	})
+	return all, err
+}
+
 func cmdUninstall(ctx context.Context, o opts) error {
-	ui.Title("Finding installed apps")
-	all, err := apps.Discover()
+	header("🚮", "Uninstall")
+	all, err := discoverApps()
 	if err != nil {
 		return err
 	}
@@ -42,22 +52,51 @@ func cmdUninstall(ctx context.Context, o opts) error {
 	return uninstallApp(ctx, app, installed, all, o)
 }
 
+func appItems(list []apps.App) []tui.Item {
+	items := make([]tui.Item, len(list))
+	for i, a := range list {
+		detail := []string{}
+		if a.BundleID != "" {
+			detail = append(detail, a.BundleID)
+		}
+		if a.Vendor != "" {
+			detail = append(detail, a.Vendor)
+		}
+		if a.Path != "" {
+			detail = append(detail, fsutil.Tilde(a.Path))
+		}
+		items[i] = tui.Item{Label: a.Name, Sub: a.Version, Detail: strings.Join(detail, "  ·  "), Size: a.Size}
+	}
+	return items
+}
+
 func pickApp(list []apps.App, query string) (apps.App, bool, error) {
+	choose := func(cands []apps.App, filter bool) (apps.App, bool, error) {
+		i := pickOne(tui.PickOptions{Icon: "🚮", Title: "Choose an app to uninstall", Items: appItems(cands), Filter: filter,
+			Subtitle: "Type to search · sweepr finds every file the app left behind"})
+		if i < 0 {
+			return apps.App{}, false, errors.New("cancelled")
+		}
+		return cands[i], true, nil
+	}
 	if query == "" {
 		if !ui.Interactive() {
 			return apps.App{}, false, errors.New("name the app: sweepr uninstall \"App Name\"")
 		}
+		if fancy {
+			return choose(list, true)
+		}
 		query = ui.Ask("  App to uninstall (name or part of it; enter to list all):")
 		if query == "" {
-			a, err := chooseOne(list)
-			return a, true, err
+			return choose(list, false)
 		}
 	}
 	matches := apps.Find(list, query)
 	switch len(matches) {
 	case 0:
 		ui.Warn("No installed app matches %q", query)
-		if ui.Confirm(fmt.Sprintf("Search for files left behind by an already-deleted app called %q?", query), true) {
+		if confirm(fmt.Sprintf("Search for files left behind by an already-deleted app called %q?", query),
+			"Useful when you already dragged the app to the Trash.", true, false) {
 			return apps.App{Name: query}, false, nil
 		}
 		return apps.App{}, false, errors.New("nothing to uninstall")
@@ -71,49 +110,29 @@ func pickApp(list []apps.App, query string) (apps.App, bool, error) {
 		}
 		return apps.App{}, false, fmt.Errorf("%q matches several apps: %s", query, strings.Join(names, ", "))
 	}
-	a, err := chooseOne(matches)
-	return a, true, err
-}
-
-func chooseOne(list []apps.App) (apps.App, error) {
-	if len(list) == 0 {
-		return apps.App{}, errors.New("no apps found")
-	}
-	fmt.Println()
-	for i, a := range list {
-		fmt.Printf("  %3d. %-40s %s\n", i+1, a.Name, ui.Dim(a.Version))
-	}
-	for {
-		in := ui.Ask("\n  Number (q to cancel):")
-		if in == "q" || in == "" {
-			return apps.App{}, errors.New("cancelled")
-		}
-		n, err := strconv.Atoi(in)
-		if err == nil && n >= 1 && n <= len(list) {
-			return list[n-1], nil
-		}
-		ui.Warn("Enter a number between 1 and %d", len(list))
-	}
+	return choose(matches, false)
 }
 
 func uninstallApp(ctx context.Context, app apps.App, installed bool, all []apps.App, o opts) error {
-	ui.Title("Uninstalling " + app.Name)
-	if app.Version != "" {
-		ui.Info("Version   %s", app.Version)
+	info := [][2]string{{"version", app.Version}, {"bundle ID", app.BundleID}, {"publisher", app.Vendor},
+		{"location", fsutil.Tilde(app.Path)}}
+	if !installed {
+		info = append(info, [2]string{"status", "not installed: searching leftovers by name"})
 	}
-	if app.BundleID != "" {
-		ui.Info("Bundle ID %s", app.BundleID)
-	}
-	if app.Vendor != "" {
-		ui.Info("Publisher %s", app.Vendor)
-	}
-	if app.Path != "" {
-		ui.Info("Location  %s", fsutil.Tilde(app.Path))
+	if fancy {
+		fmt.Println(tui.Card("🚮 "+app.Name, info))
+	} else {
+		ui.Title("Uninstalling " + app.Name)
+		for _, r := range info {
+			if r[1] != "" {
+				ui.Info("%-10s %s", r[0], r[1])
+			}
+		}
 	}
 
 	if installed && apps.IsRunning(app) {
 		ui.Warn("%s is running", app.Name)
-		if !o.DryRun && ui.Confirm("Quit it now?", true) {
+		if !o.DryRun && confirm("Quit "+app.Name+" now?", "It will be asked to quit normally so it can save its work.", true, false) {
 			_ = apps.Quit(app)
 			for i := 0; i < 10 && apps.IsRunning(app); i++ {
 				time.Sleep(500 * time.Millisecond)
@@ -129,7 +148,7 @@ func uninstallApp(ctx context.Context, app apps.App, installed bool, all []apps.
 	if runtime.GOOS == "windows" && installed && app.UninstallCmd != "" {
 		if o.DryRun {
 			ui.Info("Would run the app's uninstaller: %s", ui.Dim(app.UninstallCmd))
-		} else if ui.Confirm("Run "+app.Name+"'s own uninstaller first? (recommended)", true) {
+		} else if confirm("Run "+app.Name+"'s own uninstaller first?", "Recommended: it removes services and drivers cleanly.", true, false) {
 			if err := apps.RunUninstaller(app, o.Quiet); err != nil {
 				ui.Warn("Uninstaller reported: %v", err)
 			} else {
@@ -143,31 +162,42 @@ func uninstallApp(ctx context.Context, app apps.App, installed bool, all []apps.
 	if o.AI {
 		client = ai.New()
 		aiNotice(client)
-		ui.Info("Asking Claude which other names %s uses on disk…", app.Name)
-		ts, err := client.SuggestTerms(ctx, appInfo(app, installed, all))
-		if err != nil {
-			ui.Warn("AI suggestions skipped: %v", err)
-		}
-		for _, t := range ts {
+		var suggested []ai.Term
+		_ = task("Asking Claude where "+app.Name+" hides its files", func(func(tui.Update)) (string, error) {
+			var err error
+			suggested, err = client.SuggestTerms(ctx, appInfo(app, installed, all))
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%d extra names to search for", len(suggested)), nil
+		})
+		for _, t := range suggested {
 			terms = append(terms, t.Term)
-			ui.Info("  + %s %s", t.Term, ui.Dim("("+t.Why+")"))
+			fmt.Println(tui.Bullet(t.Term, t.Why))
 		}
 	}
 
-	ui.Info("Searching for related files…")
-	cands := apps.Leftovers(app, all, terms)
+	var cands []apps.Candidate
+	_ = task("Hunting for leftovers", func(func(tui.Update)) (string, error) {
+		cands = apps.Leftovers(app, all, terms)
+		var total int64
+		for _, c := range cands {
+			total += max(c.Size, 0)
+		}
+		return fmt.Sprintf("%s · %s", itemsText(len(cands)), ui.Size(total)), nil
+	})
 	if len(cands) == 0 {
 		ui.OK("No files left behind by %s", app.Name)
 		return nil
 	}
 	if client != nil {
 		reviewCandidates(ctx, cands, func(items []ai.Item) ([]ai.Verdict, error) {
-			ui.Info("Claude is reviewing %d items…", len(items))
 			return client.ReviewLeftovers(ctx, appInfo(app, installed, all), items)
 		})
 	}
 
-	if err := pickAndRemove("uninstall", cands, o); err != nil {
+	if err := pickAndRemove("uninstall", "🚮", "Uninstall "+app.Name,
+		"High-confidence matches are selected. Review medium ones before adding them.", cands, o); err != nil {
 		return err
 	}
 	if receipts := apps.Receipts(app); len(receipts) > 0 && !o.DryRun {
@@ -179,32 +209,42 @@ func uninstallApp(ctx context.Context, app apps.App, installed bool, all []apps.
 	return nil
 }
 
-// pickAndRemove shows the candidates, lets the user adjust the selection and
-// removes what is left selected (to the Trash unless --permanent).
-func pickAndRemove(op string, cands []apps.Candidate, o opts) error {
-	rows := make([]ui.Row, len(cands))
+func candidateItems(cands []apps.Candidate) []tui.Item {
+	items := make([]tui.Item, len(cands))
 	for i, c := range cands {
 		label := fsutil.Tilde(c.Path)
+		badge := c.Confidence.String()
 		if c.Kind == safety.Registry {
-			label = ui.Blue("[registry] ") + label
+			label = "⌘ " + label
 		}
-		note := c.Confidence.String() + ": " + c.Reason
 		if c.SharedWith != "" {
-			note += " · " + ui.Yellow("also matches "+c.SharedWith)
+			badge = "shared"
+		}
+		detail := []string{c.Confidence.String() + " confidence: " + c.Reason}
+		if c.SharedWith != "" {
+			detail = append(detail, "also matches "+c.SharedWith+", so it is not selected")
 		}
 		if c.AINote != "" {
-			note += " · " + ui.Cyan(c.AINote)
+			detail = append(detail, c.AINote)
 		}
-		rows[i] = ui.Row{Label: label, Note: note, Size: c.Size, Selected: c.Selected}
+		items[i] = tui.Item{Label: label, Badge: badge, AI: c.AIVerdict, Detail: strings.Join(detail, "\n"),
+			Size: c.Size, Selected: c.Selected}
 	}
-	if !ui.Choose(rows) {
+	return items
+}
+
+// pickAndRemove shows the candidates, lets the user adjust the selection and
+// removes what is left selected (to the Trash unless --permanent).
+func pickAndRemove(op, icon, title, subtitle string, cands []apps.Candidate, o opts) error {
+	items := candidateItems(cands)
+	if !pick(tui.PickOptions{Icon: icon, Title: title, Subtitle: subtitle, Items: items, Action: "remove"}) {
 		ui.Info("Cancelled")
 		return nil
 	}
 	var targets []safety.Target
 	var total int64
-	for i, r := range rows {
-		if r.Selected {
+	for i, it := range items {
+		if it.Selected {
 			targets = append(targets, safety.Target{Path: cands[i].Path, Kind: cands[i].Kind, Size: cands[i].Size})
 			total += max(cands[i].Size, 0)
 		}
@@ -271,8 +311,19 @@ func reviewCandidates(ctx context.Context, cands []apps.Candidate, review func([
 			return
 		}
 		end := min(start+aiBatch, len(items))
-		batch := items[start:end]
-		verdicts, err := review(batch)
+		var verdicts []ai.Verdict
+		err := task(fmt.Sprintf("Claude is reviewing %s", itemsText(end-start)), func(func(tui.Update)) (string, error) {
+			var err error
+			verdicts, err = review(items[start:end])
+			if err != nil {
+				return "", err
+			}
+			counts := map[string]int{}
+			for _, v := range verdicts {
+				counts[v.Decision]++
+			}
+			return fmt.Sprintf("%d remove · %d keep · %d unsure", counts["remove"], counts["keep"], counts["unsure"]), nil
+		})
 		if err != nil {
 			ui.Warn("AI review skipped: %v", err)
 			return
@@ -282,7 +333,8 @@ func reviewCandidates(ctx context.Context, cands []apps.Candidate, review func([
 				continue
 			}
 			c := &cands[index[v.ID]]
-			c.AINote = fmt.Sprintf("AI %s %.0f%%: %s", v.Decision, v.Confidence*100, v.Reason)
+			c.AIVerdict = v.Decision
+			c.AINote = fmt.Sprintf("✦ AI %s (%.0f%%): %s", v.Decision, v.Confidence*100, v.Reason)
 			switch v.Decision {
 			case "remove":
 				if v.Confidence >= 0.75 && c.SharedWith == "" {
@@ -302,5 +354,5 @@ func aiNotice(c *ai.Client) {
 		return
 	}
 	aiNoticeShown = true
-	ui.Info(ui.Dim("AI review uses " + c.Model() + ". Only paths, names and sizes are sent — never file contents."))
+	ui.Info("%s", ui.Dim("✦ AI uses "+c.Model()+". Only paths, names and sizes are sent, never file contents."))
 }

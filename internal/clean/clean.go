@@ -47,11 +47,17 @@ type Group struct {
 // Scan expands every target. Earlier targets claim their paths first, so a
 // specific target (Chrome cache) wins over a general one (all app caches)
 // and nothing is counted twice.
-func Scan(targets []Target) []Group {
+func Scan(targets []Target) []Group { return ScanProgress(targets, nil) }
+
+// ScanProgress is Scan with a callback before each target is measured.
+func ScanProgress(targets []Target, progress func(done, total int, name string)) []Group {
 	wl := config.Whitelist()
 	var claimed []string
 	var groups []Group
-	for _, t := range targets {
+	for i, t := range targets {
+		if progress != nil {
+			progress(i, len(targets), t.Name)
+		}
 		g := Group{Target: t}
 		if t.SpecialSize != nil {
 			g.Size = t.SpecialSize()

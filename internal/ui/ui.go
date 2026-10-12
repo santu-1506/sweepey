@@ -30,6 +30,9 @@ func detectColor() bool {
 
 func isTerminal(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
 
+// OutputTerminal reports whether stdout is a terminal (not a pipe or file).
+func OutputTerminal() bool { return isTerminal(os.Stdout) }
+
 // Interactive reports whether stdin is a terminal we can prompt on.
 func Interactive() bool { return isTerminal(os.Stdin) }
 
